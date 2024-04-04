@@ -5,6 +5,12 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.io.Serializable;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectOutputStream;
+import java.io.ObjectInputStream;
+import java.util.PriorityQueue;
+import java.util.Comparator;
+
 
 class Status{
     // Class to log status of current data transfer
@@ -15,7 +21,7 @@ class Status{
 }
 
 
-public class Packet implements Serializable {
+class Packet implements Serializable {
     private int seqNum;
     private byte[] data;
 
@@ -134,12 +140,22 @@ class Client implements Runnable{
 
     public void receiveFile() throws IOException {
         ByteArrayOutputStream fileBytes = new ByteArrayOutputStream();
-
+        PriorityQueue<Packet> packetQueue = new PriorityQueue<>(new PacketComparator());
+        int expectedSequenceNumber = 0;
+    
         while (true) {
             byte[] chunk = new byte[this.recvBufferSize];
-            int len = this.connectedSocket.getInputStream().read(chunk);
-            System.out.println("Received " + len + " Bytes");
-            if (len == -1) {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            int len;
+            while ((len = this.connectedSocket.getInputStream().read(chunk)) != -1) {
+                baos.write(chunk, 0, len);
+                if (len < this.recvBufferSize) {
+                    break;
+                }
+            }
+            byte[] objectBytes = baos.toByteArray();
+            
+            if (objectBytes.length == 0) {
                 try (OutputStream outputStream = new FileOutputStream(this.videoFileName)) {
                     fileBytes.writeTo(outputStream);
                 } catch (Exception e) {
@@ -150,23 +166,26 @@ class Client implements Runnable{
                 this.status.status = true;
                 break;
             } else {
-                if (len == this.recvBufferSize) {
-                    // Extracting timestamp
-                    String recvTime = String.valueOf(System.currentTimeMillis());
-                    byte[] sendingTimestamp = Arrays.copyOfRange(chunk, 0, recvTime.getBytes().length);
-                    byte[] videoBytes = Arrays.copyOfRange(chunk, recvTime.getBytes().length, chunk.length);
-                    String sendingTime = new String(sendingTimestamp);
-                    try {
-                        String s = "Network Lag: " + (Long.parseLong(recvTime) - Long.parseLong(sendingTime)) + "\n";
-                        System.out.println(s);
-                        Files.write(Paths.get("MultiPath.txt"), s.getBytes(), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-                    } catch (NumberFormatException e){
-                        ;
-                    }
-                    fileBytes.write(videoBytes);
-                } else {
-                    fileBytes.write(chunk);
+                // Deserialize the byte array into a Packet object
+                ByteArrayInputStream bais = new ByteArrayInputStream(objectBytes);
+                Packet packet = null;
+                try (ObjectInputStream ois = new ObjectInputStream(bais)) {
+                    packet = (Packet) ois.readObject();
+                } catch (ClassNotFoundException e) {
+                    e.printStackTrace();
                 }
+    
+                if (packet != null) {
+                    packetQueue.add(packet);
+    
+                    while (!packetQueue.isEmpty() && packetQueue.peek().getSeqNum() == expectedSequenceNumber) {
+                        Packet nextPacket = packetQueue.poll();
+                        fileBytes.write(nextPacket.getData());
+                        expectedSequenceNumber++;
+                    }
+                    System.out.println("Received " + objectBytes.length + " Bytes with seqNum: " + expectedSequenceNumber);
+                }
+               
             }
         }
     }
@@ -192,8 +211,8 @@ public class Main {
         int rttHandlerPortPath1 = 8001;
         int rttHandlerPortPath2 = 8002;
         int timeoutOfRttHi = 200;
-        String serverIP = "192.168.226.1";
-        String helperIP = "10.42.0.199";
+        String serverIP = "192.168.45.184"; // wifi as the server
+        String helperIP = "192.168.242.184"; // ethernet as the helper
 
         Client client1 = new Client(serverIP, portForPath1, 0, done);
         Client client2 = new Client(helperIP, portForPath2, 1, done);

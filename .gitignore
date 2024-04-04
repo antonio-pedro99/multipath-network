@@ -1,0 +1,4 @@
+# ignore all .class, .jar and .zip files
+
+*.class
+*.zip

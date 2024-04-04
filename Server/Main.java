@@ -4,16 +4,22 @@ import java.io.IOException;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-
+import java.io.Serializable;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectOutputStream;
 /*
  * Add bandwidth controls channel for each path separately and utilize them to probe the instantaneous bandwidth. 
  * Use mean or any other smoothening function to dampen the noisy spikes.
  */
 class BWControlChannel implements Runnable {
 
+    @Override
+    public void run() {
+        // Implement the bandwidth control channel here
+    }
 }
 
-class Packet {
+class Packet implements Serializable {
     private int seqNum;
     private byte[] data;
 
@@ -192,36 +198,44 @@ class Server{
         boolean isBreak = false;
         ByteBuffer byteBuffer;
 
+
         int seqNumber = 0;
-        packet = new Packet(seqNumber, fileBytes);
 
         // Reading 1024 bytes from the read file and sending it over TCP socket
         while (!isBreak) {
             byte[] slice;
             // Bifurcating the whole file content into chunks
-            if (sentSliceSize + this.sendBufferSize >= packet.getData().length) { // last chunk
-                slice = Arrays.copyOfRange(packet.getData(), sentSliceSize, packet.getData().length);
+            if (sentSliceSize + this.sendBufferSize >= fileBytes.length) { // last chunk
+                slice = Arrays.copyOfRange(fileBytes, sentSliceSize, fileBytes.length);
                 isBreak = true;
             } else {
-                slice = Arrays.copyOfRange(packet.getData(), sentSliceSize, step);
+                slice = Arrays.copyOfRange(fileBytes, sentSliceSize, step);
                 sentSliceSize = step;
                 step += this.sendBufferSize;
             }
+            packet = new Packet(seqNumber, slice);
 
             // Attaching timestamp to the chunks
             byte[] currentTime = String.valueOf(System.currentTimeMillis()).getBytes();
 
-            byteBuffer = ByteBuffer.allocate(sendBufferSize + currentTime.length);
+           /*  byteBuffer = ByteBuffer.allocate(sendBufferSize + currentTime.length);
             byteBuffer.put(currentTime);
             byteBuffer.put(slice);
-            byteBuffer.flip();
+            byteBuffer.flip(); */
+
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            ObjectOutputStream objectOutputStream = new ObjectOutputStream(outputStream);
+            objectOutputStream.writeObject(packet);
+            objectOutputStream.close();
+
+            byte[] packetBytes = outputStream.toByteArray();
 
             try {
                 if (this.rttHandlerPath1.rttEstimate <= this.rttHandlerPath2.rttEstimate) {
-                    connectedSocketPath1.getOutputStream().write(byteBuffer.array());
+                    connectedSocketPath1.getOutputStream().write(packetBytes);
                     System.out.println("Sent over Path 0");
                 } else {
-                    connectedSocketPath2.getOutputStream().write(byteBuffer.array());
+                    connectedSocketPath2.getOutputStream().write(packetBytes);
                     System.out.println("Sent over Path 1");
                 }
                 seqNumber++;
